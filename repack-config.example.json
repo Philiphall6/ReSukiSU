@@ -3,9 +3,11 @@
     "signing": {
         "keystore_path": "",
         "key_alias": "",
-        "keystore_pass": "",
-        "key_pass": ""
+        "keystore_pass": "env:RESUKISU_KEYSTORE_PASSWORD",
+        "key_pass": "env:RESUKISU_KEY_PASSWORD"
     },
+    // Optional explicit input APK; avoids mtime-based selection.
+    "apk": "",
     // APK build type to use, e.g. debug or release
     "app_build_type": "",
     // ksud build type to use, e.g. debug or release

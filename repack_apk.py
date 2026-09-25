@@ -39,6 +39,7 @@ def merge_config(file_cfg: dict, args: argparse.Namespace) -> dict:
             "key_pass": "",
         },
         "app_build_type": "debug",
+        "apk": "",
         "ksud_build_type": "debug",
         "arch": [],
         "output_name": "",
@@ -52,6 +53,8 @@ def merge_config(file_cfg: dict, args: argparse.Namespace) -> dict:
 
     if args.app_build_type:
         cfg["app_build_type"] = args.app_build_type
+    if args.apk:
+        cfg["apk"] = args.apk
     if args.ksud_build_type:
         cfg["ksud_build_type"] = args.ksud_build_type
     if args.arch:
@@ -126,39 +129,40 @@ def find_strip_tool() -> Optional[Path]:
 
 
 def find_android_tool(tool_base_name: str) -> Optional[Path]:
-    direct = shutil.which(tool_base_name)
-    if direct:
-        return Path(direct)
-
     executable_names = [tool_base_name]
     if os.name == "nt":
         executable_names = [f"{tool_base_name}.exe", f"{tool_base_name}.bat", tool_base_name]
 
     sdk_root = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
-    if not sdk_root:
-        return None
+    if sdk_root:
+        build_tools = Path(sdk_root) / "build-tools"
+        if build_tools.exists():
+            candidates: List[Tuple[Tuple[int, ...], Path]] = []
+            for version_dir in build_tools.iterdir():
+                if not version_dir.is_dir():
+                    continue
+                for name in executable_names:
+                    candidate = version_dir / name
+                    if candidate.exists():
+                        candidates.append((version_key(version_dir.name), candidate))
+            if candidates:
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                return candidates[0][1]
 
-    build_tools = Path(sdk_root) / "build-tools"
-    if not build_tools.exists():
-        return None
-
-    candidates: List[Tuple[Tuple[int, ...], Path]] = []
-    for version_dir in build_tools.iterdir():
-        if not version_dir.is_dir():
-            continue
-        for name in executable_names:
-            candidate = version_dir / name
-            if candidate.exists():
-                candidates.append((version_key(version_dir.name), candidate))
-
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1]
+    direct = shutil.which(tool_base_name)
+    return Path(direct) if direct else None
 
 
-def run_cmd(args: List[str], fail_msg: str) -> None:
-    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+def run_cmd(
+    args: List[str], fail_msg: str, env: Optional[Dict[str, str]] = None
+) -> None:
+    proc = subprocess.run(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+    )
     if proc.returncode != 0:
         output = proc.stdout.strip()
         raise RuntimeError(f"{fail_msg}\nCommand: {' '.join(args)}\n{output}")
@@ -307,6 +311,25 @@ def validate_signing_config(signing: Dict[str, str]) -> None:
         raise FileNotFoundError(f"Keystore not found: {signing['keystore_path']}")
 
 
+def resolve_signing_secret(value: str) -> str:
+    """Resolve a signing secret without requiring it on the command line.
+
+    A value of ``env:NAME`` reads the secret from environment variable NAME.
+    Literal values remain supported for compatibility with existing private
+    configuration files.
+    """
+    if not value.startswith("env:"):
+        return value
+
+    variable = value.removeprefix("env:")
+    if not variable:
+        raise ValueError("Empty environment variable name in signing secret")
+    secret = os.environ.get(variable)
+    if secret is None:
+        raise ValueError(f"Signing secret environment variable is not set: {variable}")
+    return secret
+
+
 def do_repack(args: argparse.Namespace) -> int:
     ws_root = workspace_root()
     config_path = Path(args.config).resolve() if args.config else ws_root / "repack-config.json"
@@ -319,7 +342,13 @@ def do_repack(args: argparse.Namespace) -> int:
         file_cfg = {}
     cfg = merge_config(file_cfg, args)
 
-    apk = find_latest_apk(cfg["app_build_type"])
+    apk = (
+        Path(cfg["apk"]).resolve()
+        if cfg.get("apk")
+        else find_latest_apk(cfg["app_build_type"])
+    )
+    if not apk.is_file():
+        raise FileNotFoundError(f"Input APK not found: {apk}")
     arch_filters = cfg.get("arch", [])
     if not arch_filters:
         inferred = collect_existing_arches(apk)
@@ -388,6 +417,14 @@ def do_repack(args: argparse.Namespace) -> int:
         if apksigner is None:
             raise FileNotFoundError("apksigner not found in PATH or Android SDK build-tools")
 
+        signing_env = os.environ.copy()
+        signing_env["RESUKISU_APKSIGNER_STORE_PASS"] = resolve_signing_secret(
+            signing["keystore_pass"]
+        )
+        signing_env["RESUKISU_APKSIGNER_KEY_PASS"] = resolve_signing_secret(
+            signing["key_pass"]
+        )
+
         run_cmd(
             [
                 str(apksigner),
@@ -405,14 +442,15 @@ def do_repack(args: argparse.Namespace) -> int:
                 "--ks-key-alias",
                 signing["key_alias"],
                 "--ks-pass",
-                f"pass:{signing['keystore_pass']}",
+                "env:RESUKISU_APKSIGNER_STORE_PASS",
                 "--key-pass",
-                f"pass:{signing['key_pass']}",
+                "env:RESUKISU_APKSIGNER_KEY_PASS",
                 "--out",
                 str(signed_path),
                 str(aligned_path),
             ],
             "apksigner failed",
+            env=signing_env,
         )
     finally:
         # Remove intermediate files regardless of success/failure.
@@ -441,6 +479,7 @@ def build_parser() -> argparse.ArgumentParser:
     repack = subparsers.add_parser("repack", help="Repack and resign APK")
     repack.add_argument("-c", "--config", help="Path to jsonc config file")
     repack.add_argument("-b", "--app-build-type", help="APK build type override, e.g. debug/release")
+    repack.add_argument("--apk", help="Explicit input APK (preferred for reproducible release builds)")
     repack.add_argument("-t", "--ksud-build-type", help="ksud build type override, e.g. debug/release")
     repack.add_argument(
         "-a",
