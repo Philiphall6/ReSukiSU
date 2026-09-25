@@ -13,6 +13,9 @@
 #include <linux/uaccess.h>
 #include <linux/uidgid.h>
 #include <linux/namei.h>
+#if defined(CONFIG_KSU_TRACEPOINT_HOOK) && defined(CONFIG_COMPAT) && defined(CONFIG_ARM64)
+#include <linux/compat.h>
+#endif
 
 #include "policy/app_profile.h"
 #include "policy/allowlist.h"
@@ -27,6 +30,9 @@
 #include "compat/kernel_compat.h"
 #include "feature/kernel_umount.h"
 #include "feature/sucompat.h"
+#if defined(CONFIG_KSU_TRACEPOINT_HOOK) && defined(CONFIG_COMPAT) && defined(CONFIG_ARM64)
+#include "hook/lsm_hook_magic.h"
+#endif
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
 #include <linux/workqueue.h>
@@ -81,6 +87,45 @@ static inline void ksu_set_file_immutable(const char *path_name, bool immutable)
     mnt_drop_write(path.mnt);
     path_put(&path);
 }
+
+/*
+ * The arm64 syscall tracepoint redirector deliberately ignores AArch32
+ * compatibility tasks: their syscall numbers and calling convention differ
+ * from native arm64.  T653T01 runs an armeabi-v7a manager on an arm64 kernel,
+ * so the manager's setresuid transition would otherwise never reach
+ * ksu_handle_setuid() and would not receive its [ksu_driver] descriptor.
+ *
+ * task_fix_setuid is ABI-independent and runs while the child still has the
+ * zygote identity.  Preserve the capability LSM handler, then use the normal
+ * ReSukiSU setuid path only for compatibility tasks.  Native arm64 processes
+ * continue through the existing tracepoint path and are not handled twice.
+ */
+#if defined(CONFIG_KSU_TRACEPOINT_HOOK) && defined(CONFIG_COMPAT) && defined(CONFIG_ARM64)
+typedef int (*ksu_task_fix_setuid_fn)(struct cred *new, const struct cred *old, int flags);
+
+static struct ksu_lsm_hook ksu_compat_setuid_hook;
+static bool ksu_compat_setuid_hook_installed;
+
+static int ksu_compat_task_fix_setuid(struct cred *new, const struct cred *old, int flags)
+{
+    ksu_task_fix_setuid_fn original = (ksu_task_fix_setuid_fn)ksu_compat_setuid_hook.original;
+    int ret = 0;
+
+    if (original) {
+        ret = original(new, old, flags);
+        if (ret)
+            return ret;
+    }
+
+    if (is_compat_task())
+        return ksu_handle_setuid(ksu_get_uid_t(new->uid), ksu_get_uid_t(old->uid));
+
+    return 0;
+}
+
+static struct ksu_lsm_hook ksu_compat_setuid_hook =
+    KSU_LSM_HOOK_INIT(task_fix_setuid, "cap_task_fix_setuid", ksu_compat_task_fix_setuid, 0);
+#endif
 
 static inline void ksu_set_ksud_status(uid_t new_uid)
 {
@@ -206,10 +251,28 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
 void __init ksu_setuid_hook_init(void)
 {
     ksu_kernel_umount_init();
+#if defined(CONFIG_KSU_TRACEPOINT_HOOK) && defined(CONFIG_COMPAT) && defined(CONFIG_ARM64)
+    if (!ksu_compat_setuid_hook_installed) {
+        int ret = ksu_lsm_hook(&ksu_compat_setuid_hook);
+
+        if (ret) {
+            pr_err("compat setuid LSM hook registration failed: %d\n", ret);
+        } else {
+            ksu_compat_setuid_hook_installed = true;
+            pr_info("compat setuid LSM hook registered for AArch32 manager\n");
+        }
+    }
+#endif
 }
 
 void __exit ksu_setuid_hook_exit(void)
 {
     pr_info("ksu_setuid_hook_exit\n");
+#if defined(CONFIG_KSU_TRACEPOINT_HOOK) && defined(CONFIG_COMPAT) && defined(CONFIG_ARM64)
+    if (ksu_compat_setuid_hook_installed) {
+        ksu_lsm_unhook(&ksu_compat_setuid_hook);
+        ksu_compat_setuid_hook_installed = false;
+    }
+#endif
     ksu_kernel_umount_exit();
 }
