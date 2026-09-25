@@ -32,6 +32,21 @@
 #include <linux/workqueue.h>
 #endif
 
+/* arm64 uses syscall 142 for reboot, whereas an AArch32 compat process uses
+ * syscall 88.  ReSukiSU's TV manager is armeabi-v7a, so writing __NR_reboot
+ * into both seccomp caches leaves its real compat syscall blocked. */
+#if defined(CONFIG_ARM64) && defined(CONFIG_COMPAT)
+#define KSU_COMPAT_NR_REBOOT 88
+#endif
+
+static inline void ksu_allow_driver_install_syscall(struct seccomp_filter *filter)
+{
+    ksu_seccomp_allow_cache(filter, __NR_reboot);
+#if defined(KSU_COMPAT_NR_REBOOT)
+    ksu_seccomp_allow_cache_compat(filter, KSU_COMPAT_NR_REBOOT);
+#endif
+}
+
 static inline void ksu_set_file_immutable(const char *path_name, bool immutable)
 {
     struct path path;
@@ -107,7 +122,7 @@ static int handle_zygote_next_setresuid(uid_t new_uid)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
         if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
             spin_lock_irq(&current->sighand->siglock);
-            ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+            ksu_allow_driver_install_syscall(current->seccomp.filter);
             spin_unlock_irq(&current->sighand->siglock);
         }
 #else
@@ -154,7 +169,7 @@ int ksu_handle_setuid(uid_t new_uid, uid_t old_uid)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
         if (current->seccomp.mode == SECCOMP_MODE_FILTER && current->seccomp.filter) {
             spin_lock_irq(&current->sighand->siglock);
-            ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+            ksu_allow_driver_install_syscall(current->seccomp.filter);
             spin_unlock_irq(&current->sighand->siglock);
         }
 #else

@@ -1,7 +1,11 @@
-use std::path::PathBuf;
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use android_logger::Config;
-use anyhow::{Context, Ok, Result};
+use anyhow::{Context, Ok, Result, bail};
 use clap::Parser;
 use log::{LevelFilter, error, info};
 
@@ -24,6 +28,21 @@ use crate::{
 struct Args {
     #[command(subcommand)]
     command: Commands,
+}
+
+fn write_tcl_handoff_status(path: &Path, body: &str) -> Result<()> {
+    if !path.starts_with("/data/local/tmp/") {
+        bail!("TCL handoff status must be below /data/local/tmp");
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .with_context(|| format!("cannot open TCL handoff status {}", path.display()))?;
+    file.write_all(body.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -97,6 +116,22 @@ enum Commands {
         /// module load parameters (e.g. key=val key2=val2)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         params: Vec<String>,
+    },
+
+    /// TCL laboratory one-shot: load the exact module and continue late-load
+    /// in the same process that receives the KernelSU credentials/domain.
+    #[command(name = "tcl-late-load", hide = true)]
+    TclLateLoad {
+        /// Exact TCL module path
+        module: PathBuf,
+
+        /// Durable handoff status below /data/local/tmp
+        #[arg(long)]
+        status: PathBuf,
+
+        /// Manager package name
+        #[arg(long, default_value_t = String::from("com.resukisu.resukisu"))]
+        package_name: String,
     },
 
     /// Install KernelSU userspace component to system
@@ -616,6 +651,41 @@ pub fn run() -> Result<()> {
         },
         Commands::SoftReboot => crate::android::soft_reboot::soft_reboot(),
         Commands::Insmod { module, params } => debug::insmod(&module, &params),
+        Commands::TclLateLoad {
+            module,
+            status,
+            package_name,
+        } => {
+            write_tcl_handoff_status(&status, "state=TCL_KSUD_START\nphase=load-exact-module\n")?;
+            let params = vec![String::from("allow_shell=1")];
+            if let Err(error) = debug::insmod(&module, &params) {
+                let _ = write_tcl_handoff_status(
+                    &status,
+                    &format!("state=FAILED\nphase=load-exact-module\nerror={error:#}\n"),
+                );
+                return Err(error);
+            }
+            write_tcl_handoff_status(
+                &status,
+                "state=MODULE_LOADED\nwitness=ksud-same-process\nphase=late-load\n",
+            )?;
+            let result = crate::android::late_load::run(&package_name, None, true);
+            match &result {
+                std::result::Result::Ok(()) => {
+                    let _ = write_tcl_handoff_status(
+                        &status,
+                        "state=READY\nmodule=kernelsu\nmode=volatile\nlate_load=ok\n",
+                    );
+                }
+                std::result::Result::Err(error) => {
+                    let _ = write_tcl_handoff_status(
+                        &status,
+                        &format!("state=FAILED\nphase=late-load\nerror={error:#}\n"),
+                    );
+                }
+            }
+            result
+        }
         Commands::Module { command } => {
             utils::switch_mnt_ns(1)?;
             match command {

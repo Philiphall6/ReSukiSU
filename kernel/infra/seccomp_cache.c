@@ -57,11 +57,20 @@ void ksu_seccomp_allow_cache(struct seccomp_filter *filter, int nr)
     if (nr >= 0 && nr < SECCOMP_ARCH_NATIVE_NR) {
         set_bit(nr, filter->cache.allow_native);
     }
+}
+
+void ksu_seccomp_allow_cache_compat(struct seccomp_filter *filter, int nr)
+{
+    if (!filter) {
+        return;
+    }
 
 #ifdef SECCOMP_ARCH_COMPAT
     if (nr >= 0 && nr < SECCOMP_ARCH_COMPAT_NR) {
         set_bit(nr, filter->cache.allow_compat);
     }
+#else
+    (void)nr;
 #endif
 }
 #endif
