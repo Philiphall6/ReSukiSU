@@ -48,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
@@ -88,6 +90,7 @@ import com.resukisu.resukisu.ui.viewmodel.AppProfileUiAction
 import com.resukisu.resukisu.ui.viewmodel.AppProfileUiEvent
 import com.resukisu.resukisu.ui.viewmodel.AppProfileViewModel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -256,8 +259,19 @@ private fun AppProfileInner(
 ) {
     val cardConfig: CardConfig = koinInject()
     val themeConfig: ThemeConfig = koinInject()
+    val superuserFocusRequester = remember { FocusRequester() }
     val isRootGranted = !isSpecial && profile.allowSu
     val affectedApplicationsTitle = stringResource(R.string.affected_applications)
+
+    // Android TV initially focuses the app bar's Back button.  Move focus to
+    // the permission switch after the profile page has settled so DPAD_CENTER
+    // can grant/revoke root without a touch screen.
+    LaunchedEffect(isSpecial) {
+        if (!isSpecial) {
+            delay(150)
+            runCatching { superuserFocusRequester.requestFocus() }
+        }
+    }
 
     LazyColumn(modifier = modifier) {
         item {
@@ -315,6 +329,7 @@ private fun AppProfileInner(
                 )
                 {
                     SettingsSwitchWidget(
+                        modifier = Modifier.focusRequester(superuserFocusRequester),
                         icon = Icons.TwoTone.Security,
                         title = stringResource(id = R.string.superuser),
                         checked = isRootGranted,

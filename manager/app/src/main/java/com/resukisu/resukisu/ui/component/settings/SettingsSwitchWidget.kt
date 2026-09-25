@@ -14,6 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -37,6 +42,7 @@ import androidx.compose.ui.state.ToggleableState
  */
 @Composable
 fun SettingsSwitchWidget(
+    modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     iconPlaceholder: Boolean = true,
     title: String,
@@ -66,10 +72,28 @@ fun SettingsSwitchWidget(
     }
 
     SettingsBaseWidget(
-        modifier = Modifier.semantics(mergeDescendants = true) {
-            role = Role.Switch
-            toggleableState = if (checked) ToggleableState.On else ToggleableState.Off
-        },
+        modifier = modifier
+            .onPreviewKeyEvent { event ->
+                val activationKey = event.key == Key.DirectionCenter ||
+                        event.key == Key.Enter ||
+                        event.key == Key.NumPadEnter ||
+                        event.key == Key.Spacebar
+                if (activationKey) {
+                    // Consume both edges so Material's internal clickable does
+                    // not toggle a second time.  A TV remote activation is
+                    // committed once, on key release, avoiding key-repeat.
+                    if (event.type == KeyEventType.KeyUp && enabled) {
+                        rowClickAction()
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            .semantics(mergeDescendants = true) {
+                role = Role.Switch
+                toggleableState = if (checked) ToggleableState.On else ToggleableState.Off
+            },
         icon = icon,
         iconPlaceholder = iconPlaceholder,
         title = title,
