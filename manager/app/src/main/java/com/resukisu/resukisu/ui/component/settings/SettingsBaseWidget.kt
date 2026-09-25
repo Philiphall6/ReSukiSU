@@ -1,6 +1,7 @@
 package com.resukisu.resukisu.ui.component.settings
 
 import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.FocusInteraction
@@ -144,6 +145,7 @@ fun SettingsBaseWidget(
     val alpha = if (enabled) 1f else 0.38f
 
     val interactionSource = remember { MutableInteractionSource() }
+    val focused = remember { mutableStateOf(false) }
 
     /*
      * Material 3 ListItem uses fixed 56dp/72dp minimum heights that do not shrink with fontScale,
@@ -229,7 +231,6 @@ fun SettingsBaseWidget(
 
     val clickShape = if (onClick != null || onLongClick != null) {
         val pressed = remember { mutableStateOf(false) }
-        val focused = remember { mutableStateOf(false) }
         val hovered = remember { mutableStateOf(false) }
         val dragged = remember { mutableStateOf(false) }
 
@@ -287,6 +288,13 @@ fun SettingsBaseWidget(
 
     var itemModifier = (if (fillMaxWidth) modifier.fillMaxWidth() else modifier)
         .heightIn(min = adaptiveMinHeight)
+    if ((onClick != null || onLongClick != null) && focused.value) {
+        itemModifier = itemModifier.border(
+            width = 3.dp,
+            color = MaterialTheme.colorScheme.primary,
+            shape = clipShape,
+        )
+    }
     if (isOnBackground && themeConfig.isEnableBlurExp)
         itemModifier = itemModifier
             .clip(clipShape)

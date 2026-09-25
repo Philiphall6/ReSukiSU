@@ -51,6 +51,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
@@ -75,6 +77,8 @@ import com.resukisu.resukisu.ui.navigation.Route
 import com.resukisu.resukisu.ui.screen.LabelText
 import com.resukisu.resukisu.ui.theme.blurSource
 import com.resukisu.resukisu.ui.util.LocalSnackbarHost
+import com.resukisu.resukisu.ui.util.LocalPagerPage
+import com.resukisu.resukisu.ui.util.LocalSelectedPage
 import com.resukisu.resukisu.ui.util.adaptiveScaffoldWindowInsets
 import com.resukisu.resukisu.ui.util.showReplacingSnackbar
 import com.resukisu.resukisu.ui.viewmodel.SortType
@@ -83,6 +87,7 @@ import com.resukisu.resukisu.ui.viewmodel.SuperUserUiEvent
 import com.resukisu.resukisu.ui.viewmodel.SuperUserUiState
 import com.resukisu.resukisu.ui.viewmodel.SuperUserViewModel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 import java.text.SimpleDateFormat
@@ -109,6 +114,9 @@ fun SuperUserPage(bottomPadding: Dp) {
     )
     val listState = rememberLazyListState()
     val snackBarHostState = LocalSnackbarHost.current
+    val firstAppFocusRequester = remember { FocusRequester() }
+    val pagerPage = LocalPagerPage.current
+    val selectedPage = LocalSelectedPage.current
 
     var showDropdown by remember { mutableStateOf(false) }
     val restoreConfirmDialog = rememberConfirmDialog()
@@ -179,6 +187,13 @@ fun SuperUserPage(bottomPadding: Dp) {
         viewModel.dispatch(SuperUserUiAction.Search(""))
     }
 
+    LaunchedEffect(pagerPage, selectedPage, uiState.appGroupList.isNotEmpty()) {
+        if (pagerPage != null && pagerPage == selectedPage && uiState.appGroupList.isNotEmpty()) {
+            delay(250)
+            firstAppFocusRequester.requestFocus()
+        }
+    }
+
     Scaffold(
         topBar = {
             SearchAppBar(
@@ -218,6 +233,7 @@ fun SuperUserPage(bottomPadding: Dp) {
                 },
                 scrollBehavior = scrollBehavior,
                 searchBarPlaceHolderText = stringResource(R.string.search_apps),
+                nextFocusDown = firstAppFocusRequester,
             )
         },
         containerColor = Color.Transparent,
@@ -237,6 +253,7 @@ fun SuperUserPage(bottomPadding: Dp) {
             listState = listState,
             scrollBehavior = scrollBehavior,
             bottomPadding = bottomPadding,
+            firstAppFocusRequester = firstAppFocusRequester,
         )
     }
 }
@@ -284,6 +301,7 @@ private fun SuperUserContent(
     listState: androidx.compose.foundation.lazy.LazyListState,
     scrollBehavior: TopAppBarScrollBehavior,
     bottomPadding: Dp,
+    firstAppFocusRequester: FocusRequester,
 ) {
     val navigator = LocalNavigator.current
     val pullRefreshState = rememberPullToRefreshState()
@@ -356,8 +374,13 @@ private fun SuperUserContent(
                 items = uiState.appGroupList,
                 key = { _, appGroup -> "${appGroup.uid}-${appGroup.profileKey}" },
                 contentType = { _, appGroup -> "${appGroup.uid}-${appGroup.profileKey}" },
-            ) { _, appGroup ->
+            ) { index, appGroup ->
                 AppGroupItem(
+                    modifier = if (index == 0) {
+                        Modifier.focusRequester(firstAppFocusRequester)
+                    } else {
+                        Modifier
+                    },
                     appGroup = appGroup,
                     isManager = appGroup.uid in uiState.managerUids,
                 ) {
@@ -464,12 +487,14 @@ private fun SuperUserDropdown(
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun AppGroupItem(
+    modifier: Modifier = Modifier,
     appGroup: InstalledAppGroup,
     isManager: Boolean,
     onClick: () -> Unit,
 ) {
     val mainApp = appGroup.mainApp
     SettingsBaseWidget(
+        modifier = modifier,
         onClick = {
             onClick()
         },

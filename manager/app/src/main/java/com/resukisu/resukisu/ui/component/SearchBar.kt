@@ -318,6 +318,7 @@ private fun CompactSearchBar(
     interactionSource: MutableInteractionSource? = null,
     shape: Shape = inputFieldShape,
     requestFocus: Boolean = false,
+    nextFocusDown: FocusRequester? = null,
     onFocusRequestHandled: () -> Unit = {},
 ) {
     val themeConfig: ThemeConfig = koinInject()
@@ -395,6 +396,7 @@ private fun CompactSearchBar(
             .focusRequester(focusRequester)
             .focusProperties {
                 canFocus = allowFocus
+                nextFocusDown?.let { down = it }
             },
         textStyle = MaterialTheme.typography.bodyMedium.copy(
             color = MaterialTheme.colorScheme.onSurface
@@ -459,6 +461,7 @@ fun SearchAppBar(
     navigationContent: @Composable (() -> Unit)? = null,
     scrollBehavior: TopAppBarScrollBehavior? = null,
     searchBarPlaceHolderText: String,
+    nextFocusDown: FocusRequester? = null,
 ) {
     val themeConfig: ThemeConfig = koinInject()
     val cardConfig: CardConfig = koinInject()
@@ -615,6 +618,7 @@ fun SearchAppBar(
                         )
                     },
                     requestFocus = requestSearchFocus,
+                    nextFocusDown = nextFocusDown,
                     onFocusRequestHandled = {
                         requestSearchFocus = false
                     },
