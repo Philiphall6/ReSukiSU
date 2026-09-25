@@ -305,6 +305,9 @@ enum Debug {
     /// Get kernel info
     Info,
 
+    /// Diagnose the KernelSU driver and root grant without starting a shell
+    RootDiagnose,
+
     /// Print default package name
     Package,
 }
@@ -903,6 +906,50 @@ pub fn run() -> Result<()> {
                     (info.flags & uapi::KSU_GET_INFO_FLAG_PR_BUILD) != 0
                 );
                 Ok(())
+            }
+            Debug::RootDiagnose => {
+                let info = ksucalls::get_info();
+                let uid_before = unsafe { libc::getuid() };
+                let euid_before = unsafe { libc::geteuid() };
+
+                println!("diagnostic_version=1");
+                println!("arch={}", std::env::consts::ARCH);
+                println!(
+                    "driver={}",
+                    if info.version > 0 {
+                        "available"
+                    } else {
+                        "unavailable"
+                    }
+                );
+                println!("version={}", info.version);
+                println!("flags=0x{:x}", info.flags);
+                println!("manager={}", (info.flags & (1_u32 << 1)) != 0);
+                println!("late_load={}", ksucalls::is_late_load());
+                println!("uid_before={uid_before}");
+                println!("euid_before={euid_before}");
+
+                match ksucalls::grant_root() {
+                    std::result::Result::Ok(()) => {
+                        let uid_after = unsafe { libc::getuid() };
+                        let euid_after = unsafe { libc::geteuid() };
+                        println!("grant=ok");
+                        println!("uid_after={uid_after}");
+                        println!("euid_after={euid_after}");
+                        if uid_after == 0 && euid_after == 0 {
+                            Ok(())
+                        } else {
+                            bail!(
+                                "grant ioctl returned success but credentials stayed uid={uid_after} euid={euid_after}"
+                            )
+                        }
+                    }
+                    std::result::Result::Err(error) => {
+                        println!("grant=error");
+                        println!("error={error:#}");
+                        Err(error)
+                    }
+                }
             }
             Debug::Package => {
                 println!("{}", defs::DEFAULT_PACKAGE_NAME);

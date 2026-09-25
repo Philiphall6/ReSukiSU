@@ -5,10 +5,13 @@ import android.net.Uri
 import android.os.Environment
 import android.os.SystemClock
 import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.net.toUri
 import com.resukisu.resukisu.BuildConfig
 import com.resukisu.resukisu.Natives
+import com.resukisu.resukisu.R
+import com.resukisu.resukisu.data.system.TclDevicePolicy
 import com.resukisu.resukisu.domain.model.LkmSelection
 import com.topjohnwu.superuser.CallbackList
 import com.topjohnwu.superuser.Shell
@@ -31,6 +34,10 @@ class KsuCliRepository(context: Context) {
     }
 
     private val nativeLibraryDir = context.applicationInfo.nativeLibraryDir
+    private val applicationContext = context.applicationContext
+
+    private fun tclFlashBlockedMessage(): String =
+        applicationContext.getString(R.string.tcl_volatile_flash_blocked)
 
     private fun getNativeLibraryPath(name: String): String {
         val library = File(nativeLibraryDir, System.mapLibraryName(name))
@@ -289,6 +296,10 @@ class KsuCliRepository(context: Context) {
         onStdout: (String) -> Unit,
         onStderr: (String) -> Unit
     ): Boolean {
+        if (TclDevicePolicy.isExactVolatileTarget) {
+            onStderr(tclFlashBlockedMessage())
+            return false
+        }
         val command = buildString {
             append("${getKsuDaemonPath()} anykernel3 ${shellQuote(zipFile.absolutePath)}")
             slot?.let {
@@ -328,6 +339,11 @@ class KsuCliRepository(context: Context) {
     fun restoreBoot(
         onFinish: (Boolean, Int) -> Unit, onStdout: (String) -> Unit, onStderr: (String) -> Unit
     ): Boolean {
+        if (TclDevicePolicy.isExactVolatileTarget) {
+            onStderr(tclFlashBlockedMessage())
+            onFinish(false, OsConstants.EPERM)
+            return false
+        }
         val result = flashWithIO(
             "${getKsuDaemonPath()} boot-restore -f",
             onStdout,
@@ -340,6 +356,11 @@ class KsuCliRepository(context: Context) {
     fun uninstallPermanently(
         onFinish: (Boolean, Int) -> Unit, onStdout: (String) -> Unit, onStderr: (String) -> Unit
     ): Boolean {
+        if (TclDevicePolicy.isExactVolatileTarget) {
+            onStderr(tclFlashBlockedMessage())
+            onFinish(false, OsConstants.EPERM)
+            return false
+        }
         val result =
             flashWithIO(
                 "${getKsuDaemonPath()} uninstall --package-name ${BuildConfig.APPLICATION_ID}",
@@ -363,6 +384,11 @@ class KsuCliRepository(context: Context) {
         onStdout: (String) -> Unit,
         onStderr: (String) -> Unit,
     ): Boolean {
+        if (TclDevicePolicy.isExactVolatileTarget) {
+            onStderr(tclFlashBlockedMessage())
+            onFinish(false, OsConstants.EPERM)
+            return false
+        }
         val resolver = context.contentResolver
 
         val bootFile = bootUri?.let { uri ->
@@ -468,6 +494,34 @@ class KsuCliRepository(context: Context) {
     fun rootAvailable(): Boolean {
         val shell = getRootShell()
         return shell.isRoot
+    }
+
+    /**
+     * Runs the grant ioctl in an isolated child process and returns bounded,
+     * machine-readable output. The manager process itself never changes UID.
+     */
+    fun diagnoseRootGrant(): String {
+        val stdout = ArrayList<String>()
+        val stderr = ArrayList<String>()
+        val result = runCatching {
+            Shell.Builder.create().build("sh").use { shell ->
+                shell.newJob()
+                    .add("${getKsuDaemonPath()} debug root-diagnose")
+                    .to(stdout, stderr)
+                    .exec()
+            }
+        }.getOrElse { error ->
+            return "launch_error=${error.javaClass.simpleName}:${error.message.orEmpty()}"
+                .take(2048)
+        }
+
+        return buildList {
+            addAll(stdout)
+            addAll(stderr.map { "stderr=$it" })
+            add("exit=${result.code}")
+        }.filter { it.isNotBlank() }
+            .joinToString("\n")
+            .take(2048)
     }
 
 

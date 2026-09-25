@@ -30,6 +30,8 @@ data class KernelStatus(
     val isSafeMode: Boolean = false,
     val isLateLoadMode: Boolean = false,
     val isPrBuild: Boolean = false,
+    val isTclVolatileOnly: Boolean = false,
+    val rootGrantDiagnostic: String = "",
 )
 
 data class KernelFeatureSettings(

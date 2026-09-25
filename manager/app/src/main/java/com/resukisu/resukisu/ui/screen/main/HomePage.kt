@@ -280,6 +280,21 @@ fun HomePage(
                         Spacer(modifier = Modifier.height(10.dp))
                     }
 
+                    if (uiState.systemStatus.isTclVolatileOnly) {
+                        WarningCard(
+                            message = stringResource(R.string.tcl_volatile_mode_description),
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.TwoTone.Security,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
                     if (uiState.systemStatus.kernelPatchImplementation == KernelPatchImplementation.OFFICIAL) {
                         WarningCard(
                             message = stringResource(
@@ -299,7 +314,14 @@ fun HomePage(
 
                     if (uiState.systemStatus.ksuVersion != null && !uiState.systemStatus.isRootAvailable) {
                         WarningCard(
-                            message = stringResource(id = R.string.grant_root_failed),
+                            message = if (uiState.systemStatus.rootGrantDiagnostic.isBlank()) {
+                                stringResource(id = R.string.grant_root_failed)
+                            } else {
+                                stringResource(
+                                    R.string.grant_root_failed_detailed,
+                                    uiState.systemStatus.rootGrantDiagnostic
+                                )
+                            },
                             icon = {
                                 Icon(
                                     imageVector = Icons.TwoTone.Error,
@@ -571,7 +593,9 @@ private fun StatusCard(
 ) {
     val systemStatus = uiState.systemStatus
     val onClick = { _: Offset ->
-        if (systemStatus.isRootAvailable || systemStatus.kernelVersion.isGKI()) {
+        if (!systemStatus.isTclVolatileOnly &&
+            (systemStatus.isRootAvailable || systemStatus.kernelVersion.isGKI())
+        ) {
             onClickInstall()
         }
     }

@@ -88,6 +88,10 @@
     <string name="app_profile_template_import_empty">Le presse-papiers est vide !</string>
     <string name="module_changelog_failed">Échec de récupération du journal des modifications : %s</string>
     <string name="grant_root_failed">Échec de l\'octroi des privilèges root !</string>
+    <string name="grant_root_failed_detailed">Échec de l\'octroi des privilèges root. Diagnostic :\n%1$s</string>
+    <string name="tcl_volatile_mode_title">Mode TCL volatil</string>
+    <string name="tcl_volatile_mode_description">TCL T653T01 V643 détectée. Cette version autorise uniquement le chargement temporaire ; le flash de boot et d’AnyKernel est désactivé.</string>
+    <string name="tcl_volatile_flash_blocked">Opération bloquée par la politique TCL « volatil uniquement » : elle pourrait écrire une partition de démarrage.</string>
     <string name="close">Fermer</string>
     <string name="direct_install">Installation directe (recommandé)</string>
     <string name="select_file">Sélectionner un fichier d\'image à modifier</string>

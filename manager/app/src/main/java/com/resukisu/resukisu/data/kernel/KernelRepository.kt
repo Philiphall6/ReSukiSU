@@ -4,6 +4,7 @@ import android.app.Application
 import com.resukisu.resukisu.Natives
 import com.resukisu.resukisu.Natives.KernelPatchImplementation
 import com.resukisu.resukisu.data.shell.KsuCliRepository
+import com.resukisu.resukisu.data.system.TclDevicePolicy
 import com.resukisu.resukisu.data.system.isSELinuxPermissive
 import com.resukisu.resukisu.domain.model.KernelFeatureSettings
 import com.resukisu.resukisu.domain.model.KernelStatus
@@ -25,6 +26,11 @@ class KernelRepository(
         val managerUapi = runCatching { Natives.managerUAPIVersion }.getOrDefault(1)
         val fullVersion = runCatching { Natives.getFullVersion() }.getOrDefault("Unknown")
         val isRootAvailable = runCatching { ksuCliRepository.rootAvailable() }.getOrDefault(false)
+        val rootGrantDiagnostic = if (isManager && !isRootAvailable) {
+            runCatching { ksuCliRepository.diagnoseRootGrant() }.getOrDefault("")
+        } else {
+            ""
+        }
         KernelStatus(
             isManager = isManager,
             ksuVersion = ksuVersion,
@@ -47,6 +53,8 @@ class KernelRepository(
             isSafeMode = runCatching { Natives.isSafeMode }.getOrDefault(false),
             isLateLoadMode = runCatching { Natives.isLateLoadMode }.getOrDefault(false),
             isPrBuild = runCatching { Natives.isPrBuild }.getOrDefault(false),
+            isTclVolatileOnly = TclDevicePolicy.isExactVolatileTarget,
+            rootGrantDiagnostic = rootGrantDiagnostic,
         )
     }
 
