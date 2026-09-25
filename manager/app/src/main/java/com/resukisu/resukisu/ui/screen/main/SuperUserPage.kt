@@ -78,7 +78,7 @@ import com.resukisu.resukisu.ui.screen.LabelText
 import com.resukisu.resukisu.ui.theme.blurSource
 import com.resukisu.resukisu.ui.util.LocalSnackbarHost
 import com.resukisu.resukisu.ui.util.LocalPagerPage
-import com.resukisu.resukisu.ui.util.LocalSelectedPage
+import com.resukisu.resukisu.ui.util.LocalPagerState
 import com.resukisu.resukisu.ui.util.adaptiveScaffoldWindowInsets
 import com.resukisu.resukisu.ui.util.showReplacingSnackbar
 import com.resukisu.resukisu.ui.viewmodel.SortType
@@ -116,7 +116,7 @@ fun SuperUserPage(bottomPadding: Dp) {
     val snackBarHostState = LocalSnackbarHost.current
     val firstAppFocusRequester = remember { FocusRequester() }
     val pagerPage = LocalPagerPage.current
-    val selectedPage = LocalSelectedPage.current
+    val settledPage = LocalPagerState.current.settledPage
 
     var showDropdown by remember { mutableStateOf(false) }
     val restoreConfirmDialog = rememberConfirmDialog()
@@ -187,9 +187,9 @@ fun SuperUserPage(bottomPadding: Dp) {
         viewModel.dispatch(SuperUserUiAction.Search(""))
     }
 
-    LaunchedEffect(pagerPage, selectedPage, uiState.appGroupList.isNotEmpty()) {
-        if (pagerPage != null && pagerPage == selectedPage && uiState.appGroupList.isNotEmpty()) {
-            delay(250)
+    LaunchedEffect(pagerPage, settledPage, uiState.appGroupList.isNotEmpty()) {
+        if (pagerPage != null && pagerPage == settledPage && uiState.appGroupList.isNotEmpty()) {
+            delay(150)
             firstAppFocusRequester.requestFocus()
         }
     }
