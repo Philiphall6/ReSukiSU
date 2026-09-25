@@ -31,6 +31,11 @@ import java.util.Properties
 class KsuCliRepository(context: Context) {
     private companion object {
         const val TAG = "KsuCli"
+        const val UPSTREAM_OFFICIAL_SIGNATURE =
+            "size: 0x377, hash: d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64"
+        const val TCL_V643_PACKAGE = "com.philiphall6.resukisu.tcl"
+        const val TCL_V643_OFFICIAL_SIGNATURE =
+            "size: 0x35c, hash: d3058af8ca0fa6e486ff10362ef941fbf96cf7f593548f048a338e6a63ea5ea1"
     }
 
     private val nativeLibraryDir = context.applicationInfo.nativeLibraryDir
@@ -168,8 +173,11 @@ class KsuCliRepository(context: Context) {
             val out = shell.newJob()
                 .add("${getKsuDaemonPath()} debug get-sign ${shellQuote(packageResourcePath)}")
                 .to(ArrayList<String>(), null).exec().out
-            out.firstOrNull()?.trim()
-                .orEmpty() == "size: 0x377, hash: d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64"
+            val signature = out.firstOrNull()?.trim().orEmpty()
+            signature == UPSTREAM_OFFICIAL_SIGNATURE ||
+                (BuildConfig.APPLICATION_ID == TCL_V643_PACKAGE &&
+                    TclDevicePolicy.isExactVolatileTarget &&
+                    signature == TCL_V643_OFFICIAL_SIGNATURE)
         }
 
     suspend fun getFeatureStatus(feature: String): String = withContext(Dispatchers.IO) {
