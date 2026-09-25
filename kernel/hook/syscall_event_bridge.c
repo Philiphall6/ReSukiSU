@@ -23,10 +23,6 @@
 
 #if defined(__aarch64__) && defined(CONFIG_COMPAT)
 #include <linux/compat.h>
-
-/* AArch32 syscall numbers from arch/arm64/include/asm/unistd32.h. */
-#define KSU_AARCH32_NR_EXECVE 11
-#define KSU_AARCH32_NR_EXECVEAT 387
 #endif
 
 static int ksu_handle_init_mark_tracker(const char __user **filename_user)
@@ -83,6 +79,40 @@ void ksu_handle_compat_sys_enter(struct pt_regs *regs, long id)
     ret = ksu_adb_root_handle_compat_execve_tracepoint(regs, execveat);
     if (ret)
         pr_err("compat adb root failed: %ld\n", ret);
+}
+
+long __nocfi ksu_hook_compat_fstatat64(int orig_nr, const struct pt_regs *regs)
+{
+    if (!ksu_compat_syscall_table)
+        return -ENOSYS;
+    if (!static_branch_unlikely(&ksu_su_compat_enabled))
+        return ksu_compat_syscall_table[orig_nr](regs);
+
+    return ksu_handle_compat_stat_sucompat_internal(orig_nr, (struct pt_regs *)regs);
+}
+
+long __nocfi ksu_hook_compat_faccessat(int orig_nr, const struct pt_regs *regs)
+{
+    if (!ksu_compat_syscall_table)
+        return -ENOSYS;
+    if (!static_branch_unlikely(&ksu_su_compat_enabled))
+        return ksu_compat_syscall_table[orig_nr](regs);
+
+    return ksu_handle_compat_faccessat_sucompat_internal(orig_nr, (struct pt_regs *)regs);
+}
+
+long __nocfi ksu_hook_compat_execve(int orig_nr, const struct pt_regs *regs)
+{
+    if (!ksu_compat_syscall_table)
+        return -ENOSYS;
+    return ksu_handle_compat_execve_sucompat_internal(orig_nr, (struct pt_regs *)regs, false);
+}
+
+long __nocfi ksu_hook_compat_execveat(int orig_nr, const struct pt_regs *regs)
+{
+    if (!ksu_compat_syscall_table)
+        return -ENOSYS;
+    return ksu_handle_compat_execve_sucompat_internal(orig_nr, (struct pt_regs *)regs, true);
 }
 #endif
 

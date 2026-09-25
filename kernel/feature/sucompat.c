@@ -13,6 +13,9 @@
 #include <linux/types.h>
 #include <linux/ptrace.h>
 #include <linux/namei.h>
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+#include <linux/compat.h>
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 #include <linux/sched/task_stack.h>
 #else
@@ -137,6 +140,19 @@ static char __user *empty_user_path(void)
 {
     return userspace_stack_buffer("", sizeof(""));
 }
+
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+static void __user *compat_userspace_stack_buffer(const void *data, size_t len)
+{
+    void __user *ptr = userspace_stack_buffer(data, len);
+    unsigned long addr = (unsigned long)ptr;
+
+    if (!ptr || addr > U32_MAX)
+        return NULL;
+
+    return compat_ptr((compat_uptr_t)addr);
+}
+#endif
 
 static bool is_ksud_exists()
 {
@@ -338,6 +354,158 @@ long ksu_handle_execveat_sucompat_internal(const char __user **filename_user, in
                                                       (const char __user *const __user *)PT_REGS_PARM3(regs),
                                                       PT_REGS_SYSCALL_PARM4(regs), true, orig_nr, regs);
 }
+
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+static long ksu_handle_compat_path_sucompat_internal(int orig_nr, struct pt_regs *regs, const char *operation)
+{
+    const char __user *filename;
+    const char __user *replacement;
+    const struct cred *old_cred;
+    unsigned long orig_filename;
+    char path[sizeof(su_path) + 1];
+    long ret;
+
+    if (!ksu_compat_syscall_table)
+        return -ENOSYS;
+
+    if (!ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid())))
+        goto do_orig;
+
+    filename = compat_ptr((compat_uptr_t)PT_REGS_PARM2(regs));
+    memset(path, 0, sizeof(path));
+    ret = strncpy_from_user_nofault(path, filename, sizeof(path));
+    if (ret < 0 || memcmp(path, su_path, sizeof(su_path)))
+        goto do_orig;
+
+    old_cred = override_creds(ksu_cred);
+    if (!is_ksud_exists()) {
+        revert_creds(old_cred);
+        goto do_orig;
+    }
+
+    replacement = compat_userspace_stack_buffer(ksud_path, sizeof(ksud_path));
+    if (!replacement) {
+        revert_creds(old_cred);
+        pr_warn("compat %s: cannot place ksud path on user stack\n", operation);
+        goto do_orig;
+    }
+
+    pr_info("compat %s su->ksud\n", operation);
+    orig_filename = PT_REGS_PARM2(regs);
+    regs->__PT_PARM2_REG = (unsigned long)(compat_uptr_t)(unsigned long)replacement;
+    ret = ksu_compat_syscall_table[orig_nr](regs);
+    regs->__PT_PARM2_REG = orig_filename;
+    revert_creds(old_cred);
+    return ret;
+
+do_orig:
+    return ksu_compat_syscall_table[orig_nr](regs);
+}
+
+long ksu_handle_compat_faccessat_sucompat_internal(int orig_nr, struct pt_regs *regs)
+{
+    return ksu_handle_compat_path_sucompat_internal(orig_nr, regs, "faccessat");
+}
+
+long ksu_handle_compat_stat_sucompat_internal(int orig_nr, struct pt_regs *regs)
+{
+    return ksu_handle_compat_path_sucompat_internal(orig_nr, regs, "fstatat64");
+}
+
+long ksu_handle_compat_execve_sucompat_internal(int orig_nr, struct pt_regs *regs, bool execveat)
+{
+    const char __user *filename;
+    const char __user *empty_path;
+    const struct cred *old_cred;
+    struct file *ksud_file;
+    unsigned long orig_regs[5];
+    char path[sizeof(su_path) + 1];
+    long ret;
+    int su_fd = -1;
+    int tmp_fd;
+
+    if (!ksu_compat_syscall_table)
+        return -ENOSYS;
+
+    if (!static_branch_unlikely(&ksu_su_compat_enabled))
+        goto do_orig;
+
+    if (execveat && ((int)PT_REGS_PARM1(regs) != AT_FDCWD || (int)PT_REGS_PARM5(regs) != 0))
+        goto do_orig;
+
+    if (!ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid())))
+        goto do_orig;
+
+    filename = execveat ? compat_ptr((compat_uptr_t)PT_REGS_PARM2(regs)) :
+                          compat_ptr((compat_uptr_t)PT_REGS_PARM1(regs));
+    memset(path, 0, sizeof(path));
+    ret = strncpy_from_user(path, filename, sizeof(path));
+    if (ret < 0) {
+        pr_warn("access compat exec filename failed: %ld\n", ret);
+        goto do_orig;
+    }
+    if (memcmp(path, su_path, sizeof(su_path)))
+        goto do_orig;
+
+    tmp_fd = get_unused_fd_flags(O_CLOEXEC);
+    if (tmp_fd < 0) {
+        pr_err("alloc compat su tmp fd failed: %d\n", tmp_fd);
+        goto do_orig;
+    }
+
+    old_cred = override_creds(ksu_cred);
+    ksud_file = filp_open(KSUD_PATH, O_PATH, 0);
+    revert_creds(old_cred);
+    if (IS_ERR(ksud_file)) {
+        pr_err("open compat ksud failed: %ld\n", PTR_ERR(ksud_file));
+        put_unused_fd(tmp_fd);
+        goto do_orig;
+    }
+    fd_install(tmp_fd, ksud_file);
+
+    empty_path = compat_userspace_stack_buffer("", sizeof(""));
+    if (!empty_path) {
+        pr_err("cannot place compat empty path on user stack\n");
+        ksu_close_fd(tmp_fd);
+        goto do_orig;
+    }
+
+    orig_regs[0] = regs->__PT_PARM1_REG;
+    orig_regs[1] = regs->__PT_PARM2_REG;
+    orig_regs[2] = regs->__PT_PARM3_REG;
+    orig_regs[3] = regs->__PT_SYSCALL_PARM4_REG;
+    orig_regs[4] = regs->__PT_PARM5_REG;
+
+    regs->__PT_PARM1_REG = (unsigned long)tmp_fd;
+    regs->__PT_PARM2_REG = (unsigned long)(compat_uptr_t)(unsigned long)empty_path;
+    regs->__PT_PARM3_REG = execveat ? orig_regs[2] : orig_regs[1];
+    regs->__PT_SYSCALL_PARM4_REG = execveat ? orig_regs[3] : orig_regs[2];
+    regs->__PT_PARM5_REG = AT_EMPTY_PATH;
+
+    pr_info("compat sys_execve su found\n");
+    ret = escape_with_root_profile();
+    if (ret)
+        pr_err("compat escape_with_root_profile failed: %ld\n", ret);
+
+    ret = ksu_compat_syscall_table[KSU_AARCH32_NR_EXECVEAT](regs);
+    if (ret < 0) {
+        ksu_close_fd(tmp_fd);
+        regs->__PT_PARM1_REG = orig_regs[0];
+        regs->__PT_PARM2_REG = orig_regs[1];
+        regs->__PT_PARM3_REG = orig_regs[2];
+        regs->__PT_SYSCALL_PARM4_REG = orig_regs[3];
+        regs->__PT_PARM5_REG = orig_regs[4];
+    } else {
+        su_fd = ksu_install_su_fd();
+        if (su_fd < 0)
+            pr_warn("install compat su session fd failed: %d\n", su_fd);
+    }
+    return ret;
+
+do_orig:
+    return ksu_compat_syscall_table[orig_nr](regs);
+}
+#endif
 #endif
 
 #if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)

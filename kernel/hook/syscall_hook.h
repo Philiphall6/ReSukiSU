@@ -11,6 +11,21 @@ extern syscall_fn_t *ksu_syscall_table;
 // Dispatcher slot number in syscall table
 extern int ksu_dispatcher_nr;
 
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+/*
+ * AArch32 processes use a distinct syscall table and numbering on arm64.
+ * Keep the small subset used by sucompat here instead of including
+ * asm/unistd32.h, whose __NR_* namespace conflicts with the native ABI.
+ */
+#define KSU_AARCH32_NR_EXECVE 11
+#define KSU_AARCH32_NR_FSTATAT64 327
+#define KSU_AARCH32_NR_FACCESSAT 334
+#define KSU_AARCH32_NR_EXECVEAT 387
+
+extern syscall_fn_t *ksu_compat_syscall_table;
+extern int ksu_compat_dispatcher_nr;
+#endif
+
 // Syscall hook handler type.
 // orig_nr: the original syscall number before redirection
 // regs: the original pt_regs from userspace
@@ -31,6 +46,13 @@ void ksu_unregister_syscall_hook(int nr);
 
 // Check if a handler is registered in the dispatcher for syscall @nr.
 bool ksu_has_syscall_hook(int nr);
+
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+/* AArch32 counterpart of the native dispatcher API above. */
+int ksu_register_compat_syscall_hook(int nr, ksu_syscall_hook_fn fn);
+void ksu_unregister_compat_syscall_hook(int nr);
+bool ksu_has_compat_syscall_hook(int nr);
+#endif
 
 // --- Direct syscall table patching API (hook/unhook) ---
 // Directly overwrite syscall_table[@nr] with @fn using fixmap + stop_machine.

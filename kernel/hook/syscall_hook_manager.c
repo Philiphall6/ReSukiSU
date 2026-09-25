@@ -105,12 +105,15 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
 #ifdef CONFIG_COMPAT
         /*
          * AArch32 uses its own syscall-number space and syscall table.  It
-         * therefore cannot be redirected through the arm64 dispatcher.  The
-         * compat bridge only performs the pre-exec work that must happen in
-         * the tracepoint context; the original compat syscall then continues
-         * normally.
+         * therefore has a dedicated dispatcher.  Keep r7 unchanged: it is
+         * the original AArch32 syscall number used by that dispatcher.
          */
         ksu_handle_compat_sys_enter(regs, id);
+        if (ksu_compat_dispatcher_nr >= 0 && ksu_has_compat_syscall_hook(id)) {
+            struct pt_regs *current_regs = task_pt_regs(current);
+
+            current_regs->syscallno = ksu_compat_dispatcher_nr;
+        }
 #endif
         return;
     }
@@ -152,6 +155,13 @@ void __init ksu_syscall_hook_manager_init(void)
     ksu_register_syscall_hook(__NR_newfstatat, ksu_hook_newfstatat);
     ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);
 
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    ksu_register_compat_syscall_hook(KSU_AARCH32_NR_EXECVE, ksu_hook_compat_execve);
+    ksu_register_compat_syscall_hook(KSU_AARCH32_NR_EXECVEAT, ksu_hook_compat_execveat);
+    ksu_register_compat_syscall_hook(KSU_AARCH32_NR_FSTATAT64, ksu_hook_compat_fstatat64);
+    ksu_register_compat_syscall_hook(KSU_AARCH32_NR_FACCESSAT, ksu_hook_compat_faccessat);
+#endif
+
 #ifdef CONFIG_HAVE_SYSCALL_TRACEPOINTS
     ret = register_trace_prio_sys_enter(ksu_sys_enter_handler, NULL, INT_MIN);
 #ifndef CONFIG_KRETPROBES
@@ -187,6 +197,13 @@ void __exit ksu_syscall_hook_manager_exit(void)
     ksu_unregister_syscall_hook(__NR_execveat);
     ksu_unregister_syscall_hook(__NR_newfstatat);
     ksu_unregister_syscall_hook(__NR_faccessat);
+
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+    ksu_unregister_compat_syscall_hook(KSU_AARCH32_NR_EXECVE);
+    ksu_unregister_compat_syscall_hook(KSU_AARCH32_NR_EXECVEAT);
+    ksu_unregister_compat_syscall_hook(KSU_AARCH32_NR_FSTATAT64);
+    ksu_unregister_compat_syscall_hook(KSU_AARCH32_NR_FACCESSAT);
+#endif
 
     ksu_syscall_hook_exit();
 
