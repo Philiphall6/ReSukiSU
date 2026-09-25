@@ -364,21 +364,48 @@ static long ksu_handle_compat_path_sucompat_internal(int orig_nr, struct pt_regs
     unsigned long orig_filename;
     char path[sizeof(su_path) + 1];
     long ret;
+    long original_ret = -EFAULT;
+    bool allowed;
+    bool ksud_exists;
+    bool original_ran = false;
+    uid_t caller_uid;
 
     if (!ksu_compat_syscall_table)
         return -ENOSYS;
 
-    if (!ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid())))
-        goto do_orig;
-
     filename = compat_ptr((compat_uptr_t)PT_REGS_PARM2(regs));
     memset(path, 0, sizeof(path));
     ret = strncpy_from_user_nofault(path, filename, sizeof(path));
+    caller_uid = ksu_get_uid_t(current_uid());
+    if (ret == -EFAULT) {
+        /* A freshly forked AArch32 application can point at a valid, but not
+         * yet resident, userspace string.  A nofault copy then fails even
+         * though the real path syscall can fault the page in.  Run that
+         * read-only operation once, retry the nofault copy, and reuse its
+         * result if this is not the su path.  This avoids sleeping from the
+         * tracepoint callback and avoids executing any operation twice. */
+        original_ret = ksu_compat_syscall_table[orig_nr](regs);
+        original_ran = true;
+        memset(path, 0, sizeof(path));
+        ret = strncpy_from_user_nofault(path, filename, sizeof(path));
+        pr_info("compat %s cold-path retry uid=%u ret=%ld\n", operation,
+                caller_uid, ret);
+    }
     if (ret < 0 || memcmp(path, su_path, sizeof(su_path)))
         goto do_orig;
 
+    allowed = ksu_is_allow_uid_for_current(caller_uid);
+    if (!allowed) {
+        pr_info("compat %s candidate uid=%u allowed=0\n", operation,
+                caller_uid);
+        goto do_orig;
+    }
+
     old_cred = override_creds(ksu_cred);
-    if (!is_ksud_exists()) {
+    ksud_exists = is_ksud_exists();
+    pr_info("compat %s candidate uid=%u allowed=1 ksud=%d\n", operation,
+            caller_uid, ksud_exists);
+    if (!ksud_exists) {
         revert_creds(old_cred);
         goto do_orig;
     }
@@ -399,6 +426,8 @@ static long ksu_handle_compat_path_sucompat_internal(int orig_nr, struct pt_regs
     return ret;
 
 do_orig:
+    if (original_ran)
+        return original_ret;
     return ksu_compat_syscall_table[orig_nr](regs);
 }
 
