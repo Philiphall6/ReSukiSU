@@ -21,6 +21,14 @@
 
 #include "compat/kernel_compat.h"
 
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+#include <linux/compat.h>
+
+/* AArch32 syscall numbers from arch/arm64/include/asm/unistd32.h. */
+#define KSU_AARCH32_NR_EXECVE 11
+#define KSU_AARCH32_NR_EXECVEAT 387
+#endif
+
 static int ksu_handle_init_mark_tracker(const char __user **filename_user)
 {
     char path[64];
@@ -49,6 +57,34 @@ static int ksu_handle_init_mark_tracker(const char __user **filename_user)
 
     return 0;
 }
+
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+void ksu_handle_compat_sys_enter(struct pt_regs *regs, long id)
+{
+    bool execveat;
+    const char __user *filename_user;
+    long ret;
+
+    if (id == KSU_AARCH32_NR_EXECVE) {
+        execveat = false;
+        filename_user = compat_ptr((compat_uptr_t)PT_REGS_PARM1(regs));
+    } else if (id == KSU_AARCH32_NR_EXECVEAT) {
+        execveat = true;
+        filename_user = compat_ptr((compat_uptr_t)PT_REGS_PARM2(regs));
+    } else {
+        return;
+    }
+
+    /* Match the native path: only an init-domain child may root adbd. */
+    if (current->pid == 1 || !is_init(current_cred()))
+        return;
+
+    ksu_handle_init_mark_tracker(&filename_user);
+    ret = ksu_adb_root_handle_compat_execve_tracepoint(regs, execveat);
+    if (ret)
+        pr_err("compat adb root failed: %ld\n", ret);
+}
+#endif
 
 long __nocfi ksu_hook_newfstatat(int orig_nr, const struct pt_regs *regs)
 {

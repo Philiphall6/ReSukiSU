@@ -99,10 +99,22 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
 {
 #if defined(__x86_64__)
     if (unlikely(in_compat_syscall()))
+        return;
 #elif defined(__aarch64__)
-    if (unlikely(is_compat_task()))
+    if (unlikely(is_compat_task())) {
+#ifdef CONFIG_COMPAT
+        /*
+         * AArch32 uses its own syscall-number space and syscall table.  It
+         * therefore cannot be redirected through the arm64 dispatcher.  The
+         * compat bridge only performs the pre-exec work that must happen in
+         * the tracepoint context; the original compat syscall then continues
+         * normally.
+         */
+        ksu_handle_compat_sys_enter(regs, id);
 #endif
         return;
+    }
+#endif
 
     if (ksu_dispatcher_nr < 0)
         return;

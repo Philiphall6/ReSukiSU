@@ -9,6 +9,9 @@
 #include <linux/static_key.h>
 #include <linux/slab.h>
 #include <linux/version.h>
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+#include <linux/compat.h>
+#endif
 
 // https://github.com/torvalds/linux/commit/68db0cf10678630d286f4bbbbdfa102951a35faa
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
@@ -194,6 +197,120 @@ out_release_env_p:
     return ret;
 }
 
+#if defined(CONFIG_KSU_TRACEPOINT_HOOK) && defined(__aarch64__) && defined(CONFIG_COMPAT)
+/*
+ * AArch32 execve receives an array of 32-bit compat_uptr_t values.  Reusing
+ * setup_ld_preload() would read and write eight-byte native pointers and
+ * corrupt the environment array.  Keep this implementation deliberately
+ * separate so pointer width is explicit at every user-memory boundary.
+ */
+static long setup_ld_preload_compat(unsigned long *envp_reg)
+{
+    static const char kLdPreload[] = "LD_PRELOAD=/data/adb/ksu/lib/libadbroot.so";
+    static const char kLdLibraryPath[] = "LD_LIBRARY_PATH=/data/adb/ksu/lib";
+    static const size_t kReadEnvBatch = 16;
+    static const size_t kMaxEnvCount = 4096;
+    unsigned long stackp = (unsigned long)(compat_uptr_t)current_user_stack_pointer();
+    unsigned long envp_addr;
+    unsigned long ld_preload_p, ld_library_path_p;
+    compat_uptr_t *tmp_env_p = NULL, *tmp_env_p2;
+    size_t env_count = 0, total_size;
+    unsigned long not_copied;
+    long ret = 0;
+
+    if (!envp_reg)
+        return -EINVAL;
+
+    envp_addr = (unsigned long)(compat_uptr_t)READ_ONCE(*envp_reg);
+
+    ld_preload_p = stackp = ALIGN_DOWN(stackp - sizeof(kLdPreload), 8);
+    if (ld_preload_p > U32_MAX)
+        return -EOVERFLOW;
+    not_copied = copy_to_user(compat_ptr((compat_uptr_t)ld_preload_p), kLdPreload, sizeof(kLdPreload));
+    if (not_copied) {
+        pr_warn("write compat ld_preload failed: %lu\n", not_copied);
+        return -EFAULT;
+    }
+
+    ld_library_path_p = stackp = ALIGN_DOWN(stackp - sizeof(kLdLibraryPath), 8);
+    if (ld_library_path_p > U32_MAX)
+        return -EOVERFLOW;
+    not_copied =
+        copy_to_user(compat_ptr((compat_uptr_t)ld_library_path_p), kLdLibraryPath, sizeof(kLdLibraryPath));
+    if (not_copied) {
+        pr_warn("write compat ld_library_path failed: %lu\n", not_copied);
+        return -EFAULT;
+    }
+
+    for (;;) {
+        size_t request_size, read_count, max_new_env_count, new_env_count;
+        bool meet_zero = false;
+
+        if (env_count >= kMaxEnvCount) {
+            pr_err("compat envp exceeds safe entry limit\n");
+            ret = -E2BIG;
+            goto out;
+        }
+
+        tmp_env_p2 = krealloc(tmp_env_p,
+                              (env_count + kReadEnvBatch + 3) * sizeof(*tmp_env_p), GFP_KERNEL);
+        if (!tmp_env_p2) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        tmp_env_p = tmp_env_p2;
+
+        request_size = kReadEnvBatch * sizeof(*tmp_env_p);
+        not_copied = copy_from_user(&tmp_env_p[env_count],
+                                    compat_ptr((compat_uptr_t)(envp_addr +
+                                                               env_count * sizeof(*tmp_env_p))),
+                                    request_size);
+        read_count = request_size - not_copied;
+        max_new_env_count = read_count / sizeof(*tmp_env_p);
+
+        for (new_env_count = 0; new_env_count < max_new_env_count; new_env_count++) {
+            if (!tmp_env_p[env_count + new_env_count]) {
+                meet_zero = true;
+                break;
+            }
+        }
+
+        if (!meet_zero && not_copied) {
+            pr_err("truncated compat envp array\n");
+            ret = -EFAULT;
+            goto out;
+        }
+
+        env_count += new_env_count;
+        if (meet_zero)
+            break;
+    }
+
+    tmp_env_p[env_count++] = (compat_uptr_t)ld_preload_p;
+    tmp_env_p[env_count++] = (compat_uptr_t)ld_library_path_p;
+    tmp_env_p[env_count++] = 0;
+    total_size = env_count * sizeof(*tmp_env_p);
+    stackp = ALIGN_DOWN(stackp - total_size, sizeof(*tmp_env_p));
+    if (stackp > U32_MAX) {
+        ret = -EOVERFLOW;
+        goto out;
+    }
+
+    not_copied = copy_to_user(compat_ptr((compat_uptr_t)stackp), tmp_env_p, total_size);
+    if (not_copied) {
+        pr_err("copy compat envp failed: %lu\n", not_copied);
+        ret = -EFAULT;
+        goto out;
+    }
+
+    WRITE_ONCE(*envp_reg, (unsigned long)(compat_uptr_t)stackp);
+
+out:
+    kfree(tmp_env_p);
+    return ret;
+}
+#endif
+
 #ifdef CONFIG_KSU_TRACEPOINT_HOOK
 static long do_ksu_adb_root_handle_execve(const char __user *filename_user, struct pt_regs *regs, unsigned long *envp_p)
 {
@@ -234,6 +351,39 @@ long ksu_adb_root_handle_execveat_tracepoint(struct pt_regs *regs)
     }
     return 0;
 }
+
+#if defined(__aarch64__) && defined(CONFIG_COMPAT)
+long ksu_adb_root_handle_compat_execve_tracepoint(struct pt_regs *regs, bool execveat)
+{
+    const char __user *filename_user;
+    unsigned long *envp_reg;
+    long ret;
+
+    if (!static_branch_unlikely(&ksu_adb_root))
+        return 0;
+
+    if (execveat) {
+        filename_user = compat_ptr((compat_uptr_t)PT_REGS_PARM2(regs));
+        envp_reg = (unsigned long *)&PT_REGS_SYSCALL_PARM4(regs);
+    } else {
+        filename_user = compat_ptr((compat_uptr_t)PT_REGS_PARM1(regs));
+        envp_reg = (unsigned long *)&PT_REGS_PARM3(regs);
+    }
+
+    if (likely(is_exec_adbd_tracepoint(filename_user) != 1))
+        return 0;
+    if (unlikely(is_libadbroot_ok() != 1))
+        return 0;
+
+    ret = setup_ld_preload_compat(envp_reg);
+    if (ret)
+        return ret;
+
+    pr_info("escape to root for compat adb\n");
+    escape_to_root_for_adb_root();
+    return 0;
+}
+#endif
 #else
 static long do_ksu_adb_root_handle_execve(const char *filename, struct user_arg_ptr *envp)
 {
