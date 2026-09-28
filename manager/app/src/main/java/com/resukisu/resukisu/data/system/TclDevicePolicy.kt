@@ -7,16 +7,28 @@ import java.util.concurrent.TimeUnit
 /**
  * Safety policy for the TCL T653T01 laboratory target.
  *
- * This profile is deliberately exact and fail closed. It only identifies the
- * V643 build that was validated offline and on-device. The manager must never
- * turn a nearby TCL firmware version into an assumed-compatible target.
+ * Every profile is deliberately exact and fail closed. V643 was validated on
+ * device; V637 and V655/V665/V667 are experimental profiles with independent
+ * firmware/kernel checks in GhostLock. The manager only needs to keep these
+ * exact targets in volatile-only mode and must never infer a nearby version.
  */
 object TclDevicePolicy {
     const val PLATFORM = "T653T01"
-    const val FIRMWARE = "V643"
-    const val SOFTWARE_VERSION = "V8-T653T01-LF1V643"
     const val PRODUCT_DEVICE = "G08"
-    const val KERNEL_RELEASE = "5.15.180-android14-11"
+
+    private data class ExactProfile(
+        val firmware: String,
+        val softwareVersion: String,
+        val kernelRelease: String,
+    )
+
+    private val exactProfiles = listOf(
+        ExactProfile("V637", "V8-T653T01-LF1V637", "5.15.180-android14-11"),
+        ExactProfile("V643", "V8-T653T01-LF1V643", "5.15.180-android14-11"),
+        ExactProfile("V655", "V8-T653T01-LF1V655", "5.15.192-android14-11"),
+        ExactProfile("V665", "V8-T653T01-LF1V665", "5.15.192-android14-11"),
+        ExactProfile("V667", "V8-T653T01-LF1V667", "5.15.192-android14-11"),
+    )
 
     private val softwareVersionId: String by lazy {
         runCatching {
@@ -31,18 +43,24 @@ object TclDevicePolicy {
 
     val isExactVolatileTarget: Boolean
         get() {
+            if (!Build.MANUFACTURER.equals("TCL", ignoreCase = true) ||
+                !Build.DEVICE.equals(PRODUCT_DEVICE, ignoreCase = true) ||
+                Build.VERSION.SDK_INT != 34
+            ) {
+                return false
+            }
             val display = Build.DISPLAY.orEmpty()
-            val exactSoftwareVersion = softwareVersionId.equals(
-                SOFTWARE_VERSION,
-                ignoreCase = true,
-            ) || (
-                display.contains(PLATFORM, ignoreCase = true) &&
-                    display.contains(FIRMWARE, ignoreCase = true)
-                )
-            return Build.MANUFACTURER.equals("TCL", ignoreCase = true) &&
-                Build.DEVICE.equals(PRODUCT_DEVICE, ignoreCase = true) &&
-                exactSoftwareVersion &&
-                Build.VERSION.SDK_INT == 34 &&
-                Os.uname().release == KERNEL_RELEASE
+            val kernel = Os.uname().release
+            return exactProfiles.any { profile ->
+                val exactSoftwareVersion = softwareVersionId.equals(
+                    profile.softwareVersion,
+                    ignoreCase = true,
+                ) || (
+                    softwareVersionId.isBlank() &&
+                        display.contains(PLATFORM, ignoreCase = true) &&
+                        display.contains(profile.firmware, ignoreCase = true)
+                    )
+                exactSoftwareVersion && kernel == profile.kernelRelease
+            }
         }
 }

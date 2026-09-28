@@ -163,7 +163,7 @@
     <string name="grant_root_failed">Failed to grant root!</string>
     <string name="grant_root_failed_detailed">Root grant failed. Diagnostic:\n%1$s</string>
     <string name="tcl_volatile_mode_title">TCL volatile mode</string>
-    <string name="tcl_volatile_mode_description">TCL T653T01 V643 detected. This build only permits temporary late loading; boot image and AnyKernel flashing are disabled.</string>
+    <string name="tcl_volatile_mode_description">Exact TCL T653T01 volatile profile detected. This build only permits temporary late loading; boot image and AnyKernel flashing are disabled.</string>
     <string name="tcl_volatile_flash_blocked">Blocked by the TCL volatile-only safety policy: this operation could write a boot partition.</string>
     <string name="home_pr_build_warning">This is a PR debug build. Do NOT use it in production!</string>
     <string name="action">Action</string>

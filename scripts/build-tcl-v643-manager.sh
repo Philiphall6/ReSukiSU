@@ -11,8 +11,11 @@ KEYSTORE="${TCL_RELEASE_KEYSTORE:-/home/mint/.android/tcl-v643-v1-release.jks}"
 CERTIFICATE="${TCL_RELEASE_CERTIFICATE:-/home/mint/.android/tcl-v643-v1-release.der}"
 KEY_ALIAS="${TCL_RELEASE_KEY_ALIAS:-tcl-v643-v1-release}"
 PASSWORD_FILE="${TCL_RELEASE_PASSWORD_FILE:-/home/mint/.android/tcl-v643-release.pass}"
-BUILD_LABEL="${TCL_BUILD_LABEL:-v1.0-candidate}"
+BUILD_LABEL="${TCL_BUILD_LABEL:-v1.1.0-pre4}"
 OUT_DIR="${TCL_MANAGER_OUT_DIR:-$REPO_ROOT/dist-tcl/$BUILD_LABEL}"
+APK_BASENAME="ReSukiSU-TCL-T653T01-$BUILD_LABEL"
+CARGO_BIN="${TCL_CARGO_BIN:-cargo}"
+CARGO_TOOLCHAIN_ARG="${TCL_CARGO_TOOLCHAIN_ARG-+nightly}"
 
 for path in "$KEYSTORE" "$CERTIFICATE" "$BUILD_TOOLS/apksigner" "$BUILD_TOOLS/aapt2"; do
     [[ -f "$path" ]] || { echo "Missing required file: $path" >&2; exit 2; }
@@ -40,8 +43,8 @@ mkdir -p "$OUT_DIR"
 
 (
     cd "$REPO_ROOT/userspace/ksud"
-    cargo +nightly ndk b -P 26 -t armv7-linux-androideabi -r
-    cargo +nightly ndk b -P 26 -t aarch64-linux-android -r
+    "$CARGO_BIN" $CARGO_TOOLCHAIN_ARG ndk b -P 26 -t armv7-linux-androideabi -r
+    "$CARGO_BIN" $CARGO_TOOLCHAIN_ARG ndk b -P 26 -t aarch64-linux-android -r
 )
 
 (
@@ -68,10 +71,10 @@ python3 "$REPO_ROOT/repack_apk.py" repack \
     --key-alias "$KEY_ALIAS" \
     --keystore-pass env:TCL_RELEASE_STORE_PASS \
     --key-pass env:TCL_RELEASE_KEY_PASS \
-    --output-name "ReSukiSU-TCL-T653T01-V643-$BUILD_LABEL" \
+    --output-name "$APK_BASENAME" \
     --out-dir "$OUT_DIR"
 
-apk="$OUT_DIR/ReSukiSU-TCL-T653T01-V643-$BUILD_LABEL.apk"
+apk="$OUT_DIR/$APK_BASENAME.apk"
 "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$apk" \
     | tee "$OUT_DIR/APKSIGNER-VERIFY.txt"
 "$BUILD_TOOLS/aapt2" dump badging "$apk" \
