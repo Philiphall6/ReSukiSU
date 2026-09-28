@@ -5,7 +5,7 @@ import android.system.Os
 import java.util.concurrent.TimeUnit
 
 /**
- * Safety policy for the TCL C855 laboratory target.
+ * Safety policy for the TCL T653T01 laboratory target.
  *
  * This profile is deliberately exact and fail closed. It only identifies the
  * V643 build that was validated offline and on-device. The manager must never

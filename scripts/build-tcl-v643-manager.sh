@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PACKAGE_NAME="${KSU_PACKAGE_NAME:-com.philiphall6.resukisu.tcl}"
-MANAGER_NAME="${KSU_NAME:-ReSukiSU TCL C855}"
+MANAGER_NAME="${KSU_NAME:-ReSukiSU TCL T653T01}"
 ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/home/mint/Android/Sdk}"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_SDK_ROOT/ndk/29.0.14206865}"
 BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-$ANDROID_SDK_ROOT/build-tools/36.1.0}"

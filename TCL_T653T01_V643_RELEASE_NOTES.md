@@ -1,11 +1,11 @@
-# ReSukiSU TCL C855 v1.0
+# ReSukiSU TCL T653T01 v1.0
 
 First device-specific release of the ReSukiSU manager/LKM pair validated on a
-TCL C855 with firmware T653T01 V643.
+TCL T653T01 firmware V643 (hardware validation performed on a C855).
 
 ## Exact supported target
 
-- Device family: TCL C855 / T653T01
+- Platform: TCL T653T01 (hardware validation performed on C855)
 - Firmware: V643
 - Android: 14
 - Kernel: `5.15.180-android14-11`
